@@ -191,6 +191,26 @@ def transform_position_array(array, pos, euler, is_normal, reverse=False):
     else:
         return np.dot(np.asarray(array), trans_matrix) + np.asarray(pos)
 
+def discrete_vertex_normals(vertices, triangles):
+    """
+    Unit vertex normals of a triangulated surface: the sum of the (area
+    weighted) normals of the triangles sharing each vertex.
+
+    :parameter array vertices: Vx3 array of vertex positions
+    :parameter array triangles: Nx3 array of vertex indices
+    :return: Vx3 array of unit normals
+    """
+    vertices = np.asarray(vertices, dtype=float)
+    triangles = np.asarray(triangles, dtype=int)
+    v0, v1, v2 = (vertices[triangles[:, i]] for i in range(3))
+    # cross product length is twice the area: area-weighted triangle normals
+    tnormals = np.cross(v1 - v0, v2 - v0)
+    vnormals = np.zeros_like(vertices)
+    for i in range(3):
+        np.add.at(vnormals, triangles[:, i], tnormals)
+    return vnormals/np.linalg.norm(vnormals, axis=1)[:, None]
+
+
 def transform_velocity_array(array, pos_array, vel, euler, rotation_vel=(0,0,0)):
     """
     Transform any Nx3 velocity vector array by adding the center-of-mass 'vel',

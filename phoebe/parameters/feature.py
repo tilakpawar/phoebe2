@@ -1,7 +1,7 @@
 
 
 from phoebe.parameters import *
-from phoebe.features.component_features import Spot
+from phoebe.features.component_features import Spot, Pulsation
 from phoebe.features.dataset_features import GPSKLearn, GPCelerite2, RVOffset
 
 import logging
@@ -46,6 +46,7 @@ def _register_feature(feature_cls, name):
 
 
 _register_feature(Spot, 'spot')
+_register_feature(Pulsation, 'pulsation')
 _register_feature(RVOffset, 'rv_offset')
 _register_feature(GPSKLearn, 'gp_sklearn')
 _register_feature(GPCelerite2, 'gp_celerite2')

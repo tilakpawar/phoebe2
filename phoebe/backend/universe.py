@@ -997,8 +997,18 @@ class Body(object):
             # TODO: can we avoid an extra copy here?
 
 
+        # areas of the unperturbed surface: used to normalise tpole so that
+        # features displacing the surface do not renormalise the temperatures
+        self._equilibrium_areas = None
+
         if not ignore_effects and len(self.features):
             logger.debug("{}.update_position: processing features at t={}".format(self.component, self.time))
+            for feature in self.features:
+                if hasattr(feature, 'update_frame'):
+                    feature.update_frame(self.time, euler, self.polar_direction_xyz)
+            if scaledprotomesh._compute_at_vertices:
+                self._equilibrium_areas = scaledprotomesh.areas.copy()
+                vertices_equilibrium = scaledprotomesh.vertices.copy()
             # First allow features to edit the coords_for_computations (pvertices).
             # Changes here WILL affect future computations for logg, teff,
             # intensities, etc.  Note that these WILL NOT affect the
@@ -1033,6 +1043,29 @@ class Body(object):
                 else:
                     scaledprotomesh.update_columns(centers=coords_for_observations)
                     raise NotImplementedError("areas are not updated for changed mesh")
+
+            if scaledprotomesh._compute_at_vertices and not np.array_equal(scaledprotomesh.vertices, vertices_equilibrium):
+                # The vertex normals (used for mus_for_computations, i.e. the
+                # limb-darkened intensities) are the exact potential gradients of
+                # the unperturbed surface.  Rotate them by the change of the
+                # discrete vertex normals so that I(mu) sees the displaced surface;
+                # discretisation errors cancel to first order in the difference.
+                dvn = (mesh.discrete_vertex_normals(scaledprotomesh.vertices, scaledprotomesh.triangles) -
+                       mesh.discrete_vertex_normals(vertices_equilibrium, scaledprotomesh.triangles))
+                vnormals = scaledprotomesh.vnormals + dvn
+                scaledprotomesh.update_columns(vnormals=vnormals/np.linalg.norm(vnormals, axis=1)[:, None])
+
+            if scaledprotomesh._compute_at_vertices:
+                velocities = scaledprotomesh.velocities
+                velocities = np.zeros(vertices_equilibrium.shape) if velocities is None else np.asarray(velocities.for_computations if hasattr(velocities, 'for_computations') else velocities, dtype=float)
+                velocities_modified = velocities
+                for feature in self.features:
+                    velocities_modified = feature.modify_velocities(velocities_modified, vertices_equilibrium, s=self.polar_direction_xyz, t=self.time)
+                if velocities_modified is not velocities:
+                    # a NEW column: the existing ComputedColumn object is shared
+                    # with the standard mesh (from_proto does not copy), and
+                    # setting its values would accumulate velocities over time
+                    scaledprotomesh.update_columns(velocities=mesh.ComputedColumn(scaledprotomesh, velocities_modified))
 
 
         # TODO NOW [OPTIMIZE]: get rid of the deepcopy here - but without it the
@@ -1538,7 +1571,12 @@ class Star(Body):
                 raise ValueError("mesh must be computed before determining tpole")
             # Convert from mean to polar by dividing flux by gravity darkened flux (Ls drop out)
             # see PHOEBE Legacy scientific reference eq 5.20
-            self.inst_vals['tpole'] = self.teff*(np.sum(self.mesh.areas) / np.sum(self.mesh.gravs.centers*self.mesh.areas))**(0.25)
+            # use the unperturbed areas if features have displaced the surface,
+            # otherwise the renormalisation would partly cancel their effect
+            areas = getattr(self, '_equilibrium_areas', None)
+            if areas is None or len(areas) != len(self.mesh.areas):
+                areas = self.mesh.areas
+            self.inst_vals['tpole'] = self.teff*(np.sum(areas) / np.sum(self.mesh.gravs.centers*areas))**(0.25)
 
         return self.inst_vals['tpole']
 
@@ -2098,8 +2136,10 @@ class Star_roche(Star):
     @property
     def needs_recompute_instantaneous(self):
         # recompute instantaneous for asynchronous spots, even if meshing
-        # doesn't need to be recomputed
-        return self.needs_remesh or (len(self.features) and self.F != 1.0)
+        # doesn't need to be recomputed, and for features that change the
+        # surface every time step (e.g. pulsations)
+        return self.needs_remesh or (len(self.features) and self.F != 1.0) or \
+            any(feature.requires_recompute_instantaneous() for feature in self.features)
 
     @property
     def needs_remesh(self):
@@ -2539,7 +2579,8 @@ class Star_rotstar(Star):
     def needs_recompute_instantaneous(self):
         # recompute instantaneous for asynchronous spots, and single star even if meshing
         # doesn't need to be recomputed.  In the single star case, this is needed for rotstar.
-        return self.needs_remesh or (len(self.features) and (self.is_single or self.F != 1.0))
+        return self.needs_remesh or (len(self.features) and (self.is_single or self.F != 1.0)) or \
+            any(feature.requires_recompute_instantaneous() for feature in self.features)
 
     @property
     def needs_remesh(self):

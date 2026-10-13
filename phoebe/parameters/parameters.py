@@ -297,7 +297,7 @@ _forbidden_labels += ['primary_width', 'secondary_width',
 
 # from feature:
 _forbidden_labels += ['colat', 'long', 'radius', 'relteff',
-                      'radamp', 'freq', 'l', 'm', 'teffext',
+                      'radamp', 'freq', 'l', 'm', 'teffext', 'teffamp', 'teffphase', 'axis',
                       'spot', 'gp_celerite2', 'gp_sklearn', 'pulsation',
                       'gp_backend', 'kernel', 'constant_value', 'length_scale',
                       'noise_level', 'periodicity', 'alpha', 'nu',
@@ -11310,6 +11310,7 @@ class HierarchyParameter(StringParameter):
             non-unity value for `syncpar`).
         * a gaussian_process feature is attached to any dataset, unless
             `consider_gaussian_process` is False.
+        * a pulsation feature is attached to any star.
 
         To access the HierarchyParameter from the Bundle, see
          <phoebe.frontend.bundle.Bundle.get_hierarchy>.
@@ -11337,6 +11338,19 @@ class HierarchyParameter(StringParameter):
                 if self._bundle.get_value(qualifier='syncpar', component=component, context='component') != 1 and len(self._bundle.filter(context='feature', component=component)):
                     # spots on asynchronous stars
                     return True
+
+        # pulsations are not periodic in the orbital phase
+        if len(self._bundle.filter(kind=['pulsation', 'GeometricPulsation'], context='feature', **_skip_filter_checks).features):
+            return True
+        # ... and neither is any user-defined feature (e.g. a subclass of Pulsation)
+        # that changes the surface at every time step
+        for param in self._bundle.filter(qualifier='custom_code', context='feature', **_skip_filter_checks).to_list():
+            try:
+                cls = CodeParameter.get_class_from_code(param.get_source_code())
+                if cls().requires_recompute_instantaneous():
+                    return True
+            except Exception:
+                continue
 
         # TODO: allow passing compute to do only enabled features attached to enabled datasets?
         if consider_gaussian_process and len(self._bundle.filter(kind=['gp_sklearn', 'gp_celerite2'], context='feature', **_skip_filter_checks).features):
@@ -11505,6 +11519,13 @@ class ConstraintParameter(Parameter):
         if self.qualifier:
             #~ print "***", self._bundle.__repr__(), self.qualifier, self.component
             ps = self._bundle.exclude(context='constraint', **_skip_filter_checks).filter(qualifier=self.qualifier, component=self.component, dataset=self.dataset, feature=self.feature, model=self.model, **_skip_filter_checks)
+            if len(ps) > 1 and self.feature is None:
+                # a feature attached to the component can share the qualifier
+                # (e.g. freq@star and the freq of a pulsation feature): a
+                # constraint without a feature refers to the component's own parameter
+                ps_own = ps.exclude(context='feature', **_skip_filter_checks)
+                if len(ps_own) == 1:
+                    ps = ps_own
             if len(ps) == 1:
                 constrained_parameter = ps.get_parameter(**_skip_filter_checks)
             else:
