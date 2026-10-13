@@ -123,7 +123,9 @@ class ComponentFeature(BaseFeature):
 
         Units are those of coords_for_observations per day (solRad/d).
 
-        Features that move the surface (e.g. pulsations) should override this method
+        Features that move the surface (e.g. pulsations) should override this
+        method and return a NEW array (do not modify `velocities` in place: the
+        array may be shared with the standard mesh).
         """
         return velocities
 
@@ -347,6 +349,11 @@ class Spot(ComponentFeature):
 
 class GeometricPulsation(ComponentFeature):
     def requires_remeshing(self):
+        return True
+
+    def requires_recompute_instantaneous(self):
+        # pulsations change the surface at every time step (also marks the
+        # system as time-dependent: no phase folding)
         return True
         
     @classmethod

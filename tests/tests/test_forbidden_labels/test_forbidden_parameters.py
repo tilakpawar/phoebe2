@@ -18,6 +18,7 @@ def test_forbidden(verbose=False):
     b.add_compute('ellc')
 
     b.add_spot(component='primary')
+    b.add_feature('pulsation', component='secondary', feature='puls01')
     b.add_gaussian_process('sklearn', dataset='lc01')
     b.add_gaussian_process('celerite2', dataset='lc01')
 

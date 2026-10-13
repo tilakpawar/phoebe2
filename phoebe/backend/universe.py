@@ -997,8 +997,9 @@ class Body(object):
             # TODO: can we avoid an extra copy here?
 
 
-        # areas of the unperturbed surface: used to normalise tpole so that
-        # features displacing the surface do not renormalise the temperatures
+        # areas of the unperturbed surface: used to normalise tpole when features
+        # displace the surface, so that the displacement does not renormalise the
+        # temperatures (None otherwise: tpole then uses mesh.areas as before)
         self._equilibrium_areas = None
 
         if not ignore_effects and len(self.features):
@@ -1007,7 +1008,7 @@ class Body(object):
                 if hasattr(feature, 'update_frame'):
                     feature.update_frame(self.time, euler, self.polar_direction_xyz)
             if scaledprotomesh._compute_at_vertices:
-                self._equilibrium_areas = scaledprotomesh.areas.copy()
+                areas_equilibrium = scaledprotomesh.areas.copy()
                 vertices_equilibrium = scaledprotomesh.vertices.copy()
             # First allow features to edit the coords_for_computations (pvertices).
             # Changes here WILL affect future computations for logg, teff,
@@ -1045,6 +1046,7 @@ class Body(object):
                     raise NotImplementedError("areas are not updated for changed mesh")
 
             if scaledprotomesh._compute_at_vertices and not np.array_equal(scaledprotomesh.vertices, vertices_equilibrium):
+                self._equilibrium_areas = areas_equilibrium
                 # The vertex normals (used for mus_for_computations, i.e. the
                 # limb-darkened intensities) are the exact potential gradients of
                 # the unperturbed surface.  Rotate them by the change of the
@@ -1060,7 +1062,10 @@ class Body(object):
                 velocities = np.zeros(vertices_equilibrium.shape) if velocities is None else np.asarray(velocities.for_computations if hasattr(velocities, 'for_computations') else velocities, dtype=float)
                 velocities_modified = velocities
                 for feature in self.features:
-                    velocities_modified = feature.modify_velocities(velocities_modified, vertices_equilibrium, s=self.polar_direction_xyz, t=self.time)
+                    # features written against the original hook set (or saved
+                    # with an older version) may not define modify_velocities
+                    if hasattr(feature, 'modify_velocities'):
+                        velocities_modified = feature.modify_velocities(velocities_modified, vertices_equilibrium, s=self.polar_direction_xyz, t=self.time)
                 if velocities_modified is not velocities:
                     # a NEW column: the existing ComputedColumn object is shared
                     # with the standard mesh (from_proto does not copy), and
@@ -2139,7 +2144,7 @@ class Star_roche(Star):
         # doesn't need to be recomputed, and for features that change the
         # surface every time step (e.g. pulsations)
         return self.needs_remesh or (len(self.features) and self.F != 1.0) or \
-            any(feature.requires_recompute_instantaneous() for feature in self.features)
+            any(getattr(feature, 'requires_recompute_instantaneous', lambda: False)() for feature in self.features)
 
     @property
     def needs_remesh(self):
@@ -2580,7 +2585,7 @@ class Star_rotstar(Star):
         # recompute instantaneous for asynchronous spots, and single star even if meshing
         # doesn't need to be recomputed.  In the single star case, this is needed for rotstar.
         return self.needs_remesh or (len(self.features) and (self.is_single or self.F != 1.0)) or \
-            any(feature.requires_recompute_instantaneous() for feature in self.features)
+            any(getattr(feature, 'requires_recompute_instantaneous', lambda: False)() for feature in self.features)
 
     @property
     def needs_remesh(self):

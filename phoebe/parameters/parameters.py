@@ -297,7 +297,7 @@ _forbidden_labels += ['primary_width', 'secondary_width',
 
 # from feature:
 _forbidden_labels += ['colat', 'long', 'radius', 'relteff',
-                      'radamp', 'freq', 'l', 'm', 'teffext', 'teffamp', 'teffphase', 'axis',
+                      'radamp', 'freq', 'l', 'm', 'teffext', 'teffamp', 'teffphase', 'axis', 'phase',
                       'spot', 'gp_celerite2', 'gp_sklearn', 'pulsation',
                       'gp_backend', 'kernel', 'constant_value', 'length_scale',
                       'noise_level', 'periodicity', 'alpha', 'nu',
@@ -11339,18 +11339,16 @@ class HierarchyParameter(StringParameter):
                     # spots on asynchronous stars
                     return True
 
-        # pulsations are not periodic in the orbital phase
-        if len(self._bundle.filter(kind=['pulsation', 'GeometricPulsation'], context='feature', **_skip_filter_checks).features):
-            return True
-        # ... and neither is any user-defined feature (e.g. a subclass of Pulsation)
-        # that changes the surface at every time step
-        for param in self._bundle.filter(qualifier='custom_code', context='feature', **_skip_filter_checks).to_list():
-            try:
-                cls = CodeParameter.get_class_from_code(param.get_source_code())
-                if cls().requires_recompute_instantaneous():
+        features = self._bundle.filter(context='feature', **_skip_filter_checks)
+        if len(features):
+            # pulsations are not periodic in the orbital phase
+            if len(features.filter(kind=['pulsation', 'GeometricPulsation'], **_skip_filter_checks).features):
+                return True
+            # ... and neither is any user-defined feature (e.g. a subclass of
+            # Pulsation) that changes the surface at every time step
+            for param in features.filter(qualifier='custom_code', **_skip_filter_checks).to_list():
+                if _custom_feature_is_time_dependent(param.get_source_code()):
                     return True
-            except Exception:
-                continue
 
         # TODO: allow passing compute to do only enabled features attached to enabled datasets?
         if consider_gaussian_process and len(self._bundle.filter(kind=['gp_sklearn', 'gp_celerite2'], context='feature', **_skip_filter_checks).features):
@@ -12693,6 +12691,25 @@ class JobParameter(Parameter):
         # TODO: options for whether to pass delete_volume
         self.crimpl_job.resubmit_script()
         self._value = 'unknown'
+
+
+_custom_feature_time_dependence = {}
+
+def _custom_feature_is_time_dependent(code):
+    """
+    Whether a user-defined feature (stored as code) changes the surface at every
+    time step (requires_recompute_instantaneous).  Cached per source code: the
+    class is only rebuilt when the code changes.
+    """
+    if code not in _custom_feature_time_dependence:
+        try:
+            cls = CodeParameter.get_class_from_code(code)
+            method = getattr(cls, 'requires_recompute_instantaneous', None)
+            _custom_feature_time_dependence[code] = bool(method(cls.__new__(cls))) if method is not None else False
+        except Exception as err:
+            logger.warning("could not determine whether a user-defined feature is time-dependent ({}): assuming it is not".format(err))
+            _custom_feature_time_dependence[code] = False
+    return _custom_feature_time_dependence[code]
 
 
 class CodeParameter(StringParameter):

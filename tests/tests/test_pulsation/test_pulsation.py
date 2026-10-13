@@ -317,6 +317,30 @@ def test_save_load_round_trip(tmp_path):
     assert abs(b2.get_value('freq', component='primary', context='component') - 2*b.get_value('freq', component='primary', context='component')) < 1e-10
 
 
+@pytest.mark.parametrize('setup', ['roche', 'eccentric', 'sphere'])
+def test_feature_with_original_hooks_only(setup):
+    # user features written against the original hook set (or saved by earlier
+    # versions) must run; with factor = 1 the model equals no feature (to rounding:
+    # any feature makes PHOEBE recompute areas and normals from the vertices)
+    import sys, os
+    sys.path.insert(0, os.path.dirname(__file__))
+    from _subclass_for_tests import OldHooksFeature
+    fluxes = []
+    for add in (False, True):
+        b = phoebe.default_binary()
+        if setup == 'eccentric':
+            b.set_value('ecc', 0.2)
+        if setup == 'sphere':
+            b.set_value_all('distortion_method', 'sphere')
+        b.add_dataset('lc', compute_times=np.linspace(0, 1, 5), dataset='lc01')
+        b.add_dataset('rv', compute_times=np.linspace(0, 1, 5), dataset='rv01')
+        if add:
+            b.add_feature(OldHooksFeature, component='primary', feature='old', factor=1.0)
+        b.run_compute(irrad_method='none')
+        fluxes.append(b.get_value('fluxes', dataset='lc01', context='model'))
+    assert np.allclose(fluxes[0], fluxes[1], rtol=1e-12, atol=0)
+
+
 if __name__ == '__main__':
     logger = phoebe.logger(clevel='INFO')
     test_harmonics_pole_regular()
